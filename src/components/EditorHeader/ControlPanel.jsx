@@ -155,6 +155,7 @@ export default function ControlPanel({
     setTables,
     addTable,
     updateTable,
+    animateTablePositions,
     deleteField,
     deleteTable,
     updateField,
@@ -751,6 +752,7 @@ export default function ControlPanel({
     }));
   };
   const autoArrangeTables = () => {
+    if (layout.readOnly) return;
     const positions = autoArrange(tables, relationships, settings);
     const positionById = new Map(positions.map((p) => [p.id, p]));
 
@@ -769,9 +771,9 @@ export default function ControlPanel({
 
     if (elements.length === 0) return;
 
-    for (const element of elements) {
-      updateTable(element.id, element.redo);
-    }
+    animateTablePositions(
+      elements.map((element) => ({ id: element.id, ...element.redo })),
+    );
     setUndoStack((prev) => [
       ...prev,
       {
