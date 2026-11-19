@@ -161,7 +161,16 @@ export default function DiagramContextProvider({ children }) {
     }
   };
 
+  const tablesRef = useRef(tables);
+  tablesRef.current = tables;
+  const tableAnimationRef = useRef(null);
+
   const updateTable = (id, updatedValues) => {
+    // A direct move, such as a drag or an undo, takes over from an animation.
+    const animation = tableAnimationRef.current;
+    if (animation && ("x" in updatedValues || "y" in updatedValues)) {
+      animation.moves.delete(id);
+    }
     setTables((prev) =>
       prev.map((t) => (t.id === id ? { ...t, ...updatedValues } : t)),
     );
@@ -331,10 +340,74 @@ export default function DiagramContextProvider({ children }) {
     }
   };
 
+  const finishTableAnimation = () => {
+    const animation = tableAnimationRef.current;
+    if (!animation) return;
+    tableAnimationRef.current = null;
+    cancelAnimationFrame(animation.frame);
+    for (const [id, move] of animation.moves) {
+      if (tablesRef.current.some((t) => t.id === id)) {
+        updateTable(id, { x: move.to.x, y: move.to.y });
+      }
+    }
+  };
+
+  /**
+   * Moves tables to new positions over `duration` ms. Only the final positions
+   * are shared with collaborators. Callers record the undo entry themselves.
+   */
+  const animateTablePositions = (positions, duration = 400) => {
+    finishTableAnimation();
+
+    const moves = new Map();
+    for (const { id, x, y } of positions) {
+      const table = tablesRef.current.find((t) => t.id === id);
+      if (table && (table.x !== x || table.y !== y)) {
+        moves.set(id, { from: { x: table.x, y: table.y }, to: { x, y } });
+      }
+    }
+    if (moves.size === 0) return;
+
+    const reduceMotion = window.matchMedia?.(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    const animation = { moves, frame: null, start: null };
+    tableAnimationRef.current = animation;
+    if (duration <= 0 || reduceMotion) {
+      finishTableAnimation();
+      return;
+    }
+
+    const step = (now) => {
+      if (tableAnimationRef.current !== animation) return;
+      animation.start ??= now;
+      const progress = Math.min((now - animation.start) / duration, 1);
+      if (progress === 1) {
+        finishTableAnimation();
+        return;
+      }
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setTables((prev) =>
+        prev.map((t) => {
+          const move = animation.moves.get(t.id);
+          if (!move) return t;
+          return {
+            ...t,
+            x: move.from.x + (move.to.x - move.from.x) * eased,
+            y: move.from.y + (move.to.y - move.from.y) * eased,
+          };
+        }),
+      );
+      animation.frame = requestAnimationFrame(step);
+    };
+    animation.frame = requestAnimationFrame(step);
+  };
+
   const latestActionsRef = useRef(null);
   latestActionsRef.current = {
     addTable,
     updateTable,
+    animateTablePositions,
     updateField,
     deleteField,
     deleteTable,
